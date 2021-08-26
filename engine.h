@@ -55,7 +55,9 @@ struct Mesh {
 	Mesh() {}
 	Mesh(const std::string& filename) { LoadObj(filename); }
 
-	bool LoadObj(const std::string& filename) {
+	bool LoadObj(const std::string& filename, bool is_default_texels = true) {
+		t.clear();
+
 		std::ifstream reader(filename);
 		if (!reader.is_open()) return false;
 
@@ -77,6 +79,24 @@ struct Mesh {
 				char type;
 				iss >> type >> f[0] >> f[1] >> f[2];
 				t.push_back(Triangle{ vertices[f[0] - 1], vertices[f[1] - 1], vertices[f[2] - 1] });
+			}
+		}
+
+		if (is_default_texels) {
+			const Tex2D tex1[3] = { 0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 1.0f };
+			const Tex2D tex2[3] = { 0.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f };
+			//const Tex2D tex2[3] = { 1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f };
+			//const Tex2D tex2[3] = { 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f };
+
+			int n = 0;
+			for (auto& tri : t) {
+				const Tex2D* texels = (n % 2) ? tex1 : tex2;
+				
+				tri.tex[0] = texels[0];
+				tri.tex[1] = texels[1];
+				tri.tex[2] = texels[2];
+
+				n++;
 			}
 		}
 
@@ -114,11 +134,11 @@ public:
 	vf3d look_dir, cam_pos, light_dir;
 	
 	int32_t width = 0, height = 0; // Screen dimensions
-	std::unordered_map<std::string, Mesh> mesh_map;
-	std::vector<Triangle> triangles_raster;
 
 	// Cache
 	olc::vf2d prev_m_pos; // Previous mouse position
+
+	float* depth = nullptr; // Depth buffer
 private:
 	void RasterizeMesh(const Mesh& mesh, std::vector<Triangle>& raster) {
 	
@@ -223,6 +243,67 @@ private:
 		UpdateWorldMatrix(4.0f);
 		UpdateViewMatrix();
 	}
+
+	void SetProjectionMatrix(int32_t w, int32_t h, float FOV, float z_near, float z_far) {
+		width = w;
+		height = h;
+		projection.SetProjectionMatrix(w, h, FOV, z_near, z_far);
+	}
+private:
+	void DrawTexture(olc::PixelGameEngine* pge, std::vector<Triangle>& raster, olc::Sprite* sprite, bool is_wire_frame = false) {
+		for (auto& t : raster) {
+			Triangle clipped[2];
+			std::list<Triangle> clipped_triangles = { t };
+			int n_new_triangles = 1;
+
+			for (int n = 0; n < 4; n++) {
+				while (n_new_triangles > 0) {
+					Triangle test = clipped_triangles.front();
+					clipped_triangles.pop_front();
+					n_new_triangles--;
+
+					Plane plane;
+					switch (n) {
+					case 0: // Top plane
+						plane = Plane{ { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f } };
+						break;
+					case 1: // Bottom plane
+						plane = Plane{ { 0.0f, height - 1.0f, 0.0f }, { 0.0f, -1.0f, 0.0f } };
+						break;
+					case 2: // Left plane
+						plane = Plane{ { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f } };
+						break;
+					case 3:
+						plane = Plane{ { width - 1.0f, 0.0f, 0.0f }, { -1.0f, 0.0f, 0.0f } };
+						break;
+					}
+
+					int n_clip_triangles = plane.TrianglePlaneClip(test, clipped);
+
+					for (int i = 0; i < n_clip_triangles; i++) {
+						clipped_triangles.push_back(clipped[i]);
+					}
+				}
+				n_new_triangles = clipped_triangles.size();
+			}
+
+			for (auto& t_clipped : clipped_triangles) {
+
+				SpriteData s1 = { (int)t_clipped.v[0].x, (int)t_clipped.v[0].y, t_clipped.tex[0] };
+				SpriteData s2 = { (int)t_clipped.v[1].x, (int)t_clipped.v[1].y, t_clipped.tex[1] };
+				SpriteData s3 = { (int)t_clipped.v[2].x, (int)t_clipped.v[2].y, t_clipped.tex[2] };
+
+				DrawTexturedTriangle(pge, s1, s2, s3, sprite);
+
+				if (is_wire_frame) {
+					pge->DrawTriangle((int)t_clipped.v[0].x, (int)t_clipped.v[0].y,
+						(int)t_clipped.v[1].x, (int)t_clipped.v[1].y,
+						(int)t_clipped.v[2].x, (int)t_clipped.v[2].y,
+						olc::WHITE);
+				}
+			}
+		}
+	}
 private:
 	struct SpriteData {
 		float x, y;
@@ -276,29 +357,27 @@ public:
 	Engine3D() {
 		light_dir = { 0.0f, 0.0f, -1.0f };
 	}
+	~Engine3D() {
+		delete[] depth;
+	}
 
 	void Initialize(int32_t w, int32_t h, float FOV, float z_near, float z_far) {
 		SetProjectionMatrix(w, h, FOV, z_near, z_far);
+		
+		depth = new float[w * h]{ 0.0f };
 	}
 
 	vf3d GetWorldPoint(const vf3d& point) const { return world.Multiply(point); }
 	vf3d GetCamPoint(const vf3d& point) const { return cam.Multiply(point); }
 	vf3d GetViewPoint(const vf3d& point) const { return view.Multiply(point); }
+	vf3d GetScreenPoint(const vf3d& point) const { return point - vf3d{ 0.0f, 0.0f, z_translation }; }
+	vf3d GetNearPoint(const vf3d& point) const { return point + vf3d{ 0.0f, 0.0f, z_translation }; }
 	vf3d ToWorld(const olc::vf2d& point, float z_offset = 10.0f) const {
 		const vf3d& pos = vf3d{ -2.0f * (point.x / width - 0.5f), -2.0f * (point.y / height - 0.5f), 1.0f, 0.0f };
 		const vf3d& center = pos / vf3d{ projection.m[0][0], 1.0f, 1.0f, 1.0f };
 		const vf3d& cam_point = GetScreenPoint(cam_pos) + z_offset * GetCamPoint(center);
 
 		return cam_point;
-	}
-
-	vf3d GetScreenPoint(const vf3d& point) const { return point - vf3d{ 0.0f, 0.0f, z_translation }; }
-	vf3d GetNearPoint(const vf3d& point) const { return point + vf3d{ 0.0f, 0.0f, z_translation }; }
-
-	void SetProjectionMatrix(int32_t w, int32_t h, float FOV, float z_near, float z_far) {
-		width = w;
-		height = h;
-		projection.SetProjectionMatrix(w, h, FOV, z_near, z_far);
 	}
 
 	void Input(olc::PixelGameEngine* pge, float dt, float move_speed = 8.0f, float rotation_sensitivity = 2.0f) {
@@ -331,60 +410,11 @@ public:
 	}
 	
 	void Update(float dt = 0.0f) {
-		triangles_raster.clear();
 		UpdateMatrix();
-	
-		for (auto& mesh : mesh_map) {
-			mesh.second.Update(dt);
-			RasterizeMesh(mesh.second, triangles_raster);
-		}
+		memset(depth, 0.0f, width * height * sizeof(float));
 	}
-
-	void AddMesh(const std::string& identifier, const Mesh& mesh) {
-		mesh_map.insert(std::make_pair(identifier, mesh));
-	}
-
-	bool AddMesh(const std::string& identifier, const std::string& filename, const olc::Pixel& color = olc::WHITE) {
-		Mesh mesh;
-		if (mesh.LoadObj(filename)) {
-			mesh.color = color;
-			mesh_map.insert(std::make_pair(identifier, mesh));
-			return true;
-		}
-
-		return false;
-	}
-
-	bool RemoveMesh(const std::string& identifier) {
-		if (!GetMesh(identifier)) return false;
-		mesh_map.erase(identifier);
-
-		return true;
-	}
-
-	Mesh* GetMesh(const std::string& identifier) {
-		auto m = mesh_map.find(identifier);
-		if (m != mesh_map.end()) return &m->second;
-
-		return nullptr;
-	}
-
-	Mesh& operator[](const std::string& identifier) {
-		return *GetMesh(identifier);
-	}
-
-	std::unordered_map<std::string, Mesh>& GetMeshMap() { return mesh_map; }
-
-	size_t GetMeshCount() const { return mesh_map.size(); }
 
 	void RenderTriangles(olc::PixelGameEngine* pge, std::vector<Triangle>& raster) {
-		
-		std::sort(raster.begin(), raster.end(), [](const Triangle& t1, const Triangle& t2) {
-			float z1 = (t1.v[0].z + t1.v[1].z + t1.v[2].z) / 3.0f;
-			float z2 = (t2.v[0].z + t2.v[1].z + t2.v[2].z) / 3.0f;
-
-			return z1 > z2;
-		});
 
 		for (auto& t : raster) {
 			Triangle clipped[2];
@@ -423,75 +453,25 @@ public:
 			}
 
 			for (auto& t_clipped : clipped_triangles) {
-				pge->FillTriangle((int)t_clipped.v[0].x, (int)t_clipped.v[0].y,
+
+				const olc::vi2d& p1 = { (int)t_clipped.v[0].x, (int)t_clipped.v[0].y };
+				float w1 = t_clipped.tex[0].w;
+				const olc::vi2d& p2 = { (int)t_clipped.v[1].x, (int)t_clipped.v[1].y };
+				float w2 = t_clipped.tex[1].w;
+				const olc::vi2d& p3 = { (int)t_clipped.v[2].x, (int)t_clipped.v[2].y };
+				float w3 = t_clipped.tex[2].w;
+
+
+				DrawColoredTriangle(pge, p1, w1, p2, w2, p3, w3, t_clipped.shade);
+				/*pge->FillTriangle((int)t_clipped.v[0].x, (int)t_clipped.v[0].y,
 					(int)t_clipped.v[1].x, (int)t_clipped.v[1].y,
 					(int)t_clipped.v[2].x, (int)t_clipped.v[2].y,
-					t_clipped.shade);
+					t_clipped.shade);*/
 
 				/*DrawTriangle((int)t_clipped.v[0].x, (int)t_clipped.v[0].y,
 							 (int)t_clipped.v[1].x, (int)t_clipped.v[1].y,
 							 (int)t_clipped.v[2].x, (int)t_clipped.v[2].y,
 							 olc::BLACK);*/
-			}
-		}
-	}
-
-	void DrawTexture(olc::PixelGameEngine* pge, olc::Sprite* sprite) {
-		std::sort(triangles_raster.begin(), triangles_raster.end(), [](const Triangle& t1, const Triangle& t2) {
-			float z1 = (t1.v[0].z + t1.v[1].z + t1.v[2].z) / 3.0f;
-			float z2 = (t2.v[0].z + t2.v[1].z + t2.v[2].z) / 3.0f;
-
-			return z1 > z2;
-			});
-
-		for (auto& t : triangles_raster) {
-			Triangle clipped[2];
-			std::list<Triangle> clipped_triangles = { t };
-			int n_new_triangles = 1;
-
-			for (int n = 0; n < 4; n++) {
-				while (n_new_triangles > 0) {
-					Triangle test = clipped_triangles.front();
-					clipped_triangles.pop_front();
-					n_new_triangles--;
-
-					Plane plane;
-					switch (n) {
-					case 0: // Top plane
-						plane = Plane{ { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f } };
-						break;
-					case 1: // Bottom plane
-						plane = Plane{ { 0.0f, height - 1.0f, 0.0f }, { 0.0f, -1.0f, 0.0f } };
-						break;
-					case 2: // Left plane
-						plane = Plane{ { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f } };
-						break;
-					case 3:
-						plane = Plane{ { width - 1.0f, 0.0f, 0.0f }, { -1.0f, 0.0f, 0.0f } };
-						break;
-					}
-
-					int n_clip_triangles = plane.TrianglePlaneClip(test, clipped);
-
-					for (int i = 0; i < n_clip_triangles; i++) {
-						clipped_triangles.push_back(clipped[i]);
-					}
-				}
-				n_new_triangles = clipped_triangles.size();
-			}
-
-			for (auto& t_clipped : clipped_triangles) {
-				
-				SpriteData s1 = { (int)t_clipped.v[0].x, (int)t_clipped.v[0].y, t_clipped.tex[0] };
-				SpriteData s2 = { (int)t_clipped.v[1].x, (int)t_clipped.v[1].y, t_clipped.tex[1] };
-				SpriteData s3 = { (int)t_clipped.v[2].x, (int)t_clipped.v[2].y, t_clipped.tex[2] };
-				
-				DrawTexturedTriangle(pge, s1, s2, s3, sprite);
-
-				pge->DrawTriangle((int)t_clipped.v[0].x, (int)t_clipped.v[0].y,
-							 (int)t_clipped.v[1].x, (int)t_clipped.v[1].y,
-							 (int)t_clipped.v[2].x, (int)t_clipped.v[2].y,
-							 olc::WHITE);
 			}
 		}
 	}
@@ -510,23 +490,8 @@ public:
 		SpriteData move_step1, move_step2;
 		
 		// Calculate gradients for upper triangle
-
 		if (offset1.y) move_step1 = offset1 / std::fabsf(offset1.y);
 		if (offset2.y) move_step2 = offset2 / std::fabsf(offset2.y);
-
-		/*if (offset1.y) {
-			move_step1.x = offset1.x / std::fabsf(offset1.y);
-			move_step1.tex.u = offset1.tex.u / std::fabsf(offset1.y);
-			move_step1.tex.v = offset1.tex.v / std::fabsf(offset1.y);
-			move_step1.tex.w = offset1.tex.w / std::fabsf(offset1.y);
-		}
-
-		if (offset2.y) {
-			move_step2.x = offset2.x / std::fabsf(offset2.y);
-			move_step2.tex.u = offset2.tex.u / std::fabsf(offset2.y);
-			move_step2.tex.v = offset2.tex.v / std::fabsf(offset2.y);
-			move_step2.tex.w = offset2.tex.w / std::fabsf(offset2.y);
-		}*/
 
 		// Draw upper triangle
 		if (offset1.y) {
@@ -541,7 +506,10 @@ public:
 
 				for (int j = a.x; j < b.x; j++) {
 					Tex2D texel = Tex2D::Lerp(a.tex, b.tex, t);
-					pge->Draw(j, i, sprite->Sample(texel.u / texel.w, texel.v / texel.w));
+					if (texel.w > depth[i * width + j]) {
+						pge->Draw(j, i, sprite->Sample(texel.u / texel.w, texel.v / texel.w));
+						depth[i * width + j] = texel.w;
+					}
 					t += step;
 				}
 			}
@@ -550,12 +518,6 @@ public:
 		// Calculate gradients for lower triangle
 		offset1 = s3 - s2;
 		move_step1 = SpriteData{}; // Reset move_step1
-		/*if (offset1.y) {
-			move_step1.x = offset1.x / std::fabsf(offset1.y);
-			move_step1.tex.u = offset1.tex.u / std::fabsf(offset1.y);
-			move_step1.tex.v = offset1.tex.v / std::fabsf(offset1.y);
-			move_step1.tex.w = offset1.tex.w / std::fabsf(offset1.y);
-		}*/
 		if (offset1.y) move_step1 = offset1 / std::fabsf(offset1.y);
 
 		// Draw lower triangle
@@ -572,38 +534,128 @@ public:
 
 				for (int j = a.x; j < b.x; j++) {
 					Tex2D texel = Tex2D::Lerp(a.tex, b.tex, t);
-					pge->Draw(j, i, sprite->Sample(texel.u / texel.w, texel.v / texel.w));
+					if (texel.w > depth[i * width + j]) {
+						pge->Draw(j, i, sprite->Sample(texel.u / texel.w, texel.v / texel.w));
+						depth[i * width + j] = texel.w;
+					}
 					t += step;
 				}
 			}
 		}
 	}
 
-	void Render(olc::PixelGameEngine* pge) {
-		RenderTriangles(pge, triangles_raster);
+	void DrawColoredTriangle(olc::PixelGameEngine* pge, olc::vi2d p1, float w1, olc::vi2d p2, float w2, olc::vi2d p3, float w3, const olc::Pixel& color = olc::WHITE) {
+		// y-sort the points
+		if (p2.y < p1.y) { std::swap(p1, p2); std::swap(w1, w2); }
+		if (p3.y < p1.y) { std::swap(p1, p3); std::swap(w1, w3); }
+		if (p3.y < p2.y) { std::swap(p2, p3); std::swap(w2, w3); }
+
+		// Offsets between position
+		olc::vf2d offset1 = olc::vf2d(p2 - p1);
+		olc::vf2d offset2 = olc::vf2d(p3 - p1);
+
+		// Steps along the lines
+		olc::vf2d move_step1, move_step2;
+		float move_step_w1 = 0.0f, move_step_w2 = 0.0f;
+
+		// Calculate gradients for upper triangle
+		if (offset1.y) {
+			move_step1 = offset1 / std::fabsf(offset1.y);
+			move_step_w1 = (w2 - w1) / std::fabsf(offset1.y);
+		}
+		if (offset2.y) {
+			move_step2 = offset2 / std::fabsf(offset2.y);
+			move_step_w1 = (w3 - w1) / std::fabsf(offset2.y);
+		}
+
+		// Draw upper triangle
+		if (offset1.y) {
+			for (int i = p1.y; i <= p2.y; i++) {
+				olc::vi2d a = p1 + move_step1 * (i - p1.y);
+				float aw = w1 + (i - p1.y) * move_step_w1;
+				olc::vi2d b = p1 + move_step2 * (i - p1.y);
+				float bw = w1 + (i - p1.y) * move_step_w2;
+
+				if (a.x > b.x) { std::swap(a, b); std::swap(aw, bw); }
+
+				float step = 1.0f / float((int)b.x - (int)a.x);
+				float t = 0.0f;
+
+				for (int j = a.x; j < b.x; j++) {
+					float w = aw + t * (bw - aw);
+					if (w > depth[i * width + j]) {
+						pge->Draw(j, i, color);
+						depth[i * width + j] = w;
+					}
+					t += step;
+				}
+			}
+		}
+
+		// Calculate gradients for lower triangle
+		offset1 = olc::vf2d(p3 - p2);
+
+		// Reset move step
+		move_step1 = olc::vf2d{};
+		move_step_w1 = 0.0f;
+
+		if (offset1.y) {
+			move_step1 = offset1 / std::fabsf(offset1.y);
+			move_step_w1 = (w3 - w2) / std::fabsf(offset1.y);
+		}
+
+		// Draw lower triangle
+		if (offset1.y) {
+			for (int i = p2.y; i <= p3.y; i++) {
+				olc::vi2d a = p2 + move_step1 * (i - p2.y);
+				float aw = w1 + (i - p2.y) * move_step_w1;
+				olc::vi2d b = p1 + move_step2 * (i - p1.y);
+				float bw = w1 + (i - p1.y) * move_step_w2;
+
+				if (a.x > b.x) { std::swap(a, b); std::swap(aw, bw); }
+
+				float step = 1.0f / float((int)b.x - (int)a.x);
+				float t = 0.0f;
+
+				for (int j = a.x; j < b.x; j++) {
+					float w = aw + t * (bw - aw);
+					if (w > depth[i * width + j]) {
+						pge->Draw(j, i, color);
+						depth[i * width + j] = w;
+					}
+					t += step;
+				}
+			}
+		}
+	}
+
+	void DrawSprite(olc::PixelGameEngine* pge, const Mesh& mesh, olc::Sprite* sprite = nullptr, bool is_wire_frame = false) {
+		std::vector<Triangle> tris;
+		RasterizeMesh(mesh, tris);
+		DrawTexture(pge, tris, sprite, is_wire_frame);
 	}
 
 	void DrawCube(olc::PixelGameEngine* pge, const vf3d& position, const olc::Pixel& color, bool is_fill = false) {
 		Mesh cube;
 
 		cube.t = {
-			{ 0.0f, 0.0f, 0.0f, 1.0f,  0.0f, 1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 0.0f, 1.0f },
-			{ 0.0f, 0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f, 1.0f },
+			{ 0.0f, 0.0f, 0.0f, 1.0f,  0.0f, 1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 1.0f },
+			{ 0.0f, 0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f },
 
-			{ 1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f },
-			{ 1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f, 1.0f },
+			{ 1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 1.0f },
+			{ 1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f },
 
-			{ 1.0f, 0.0f, 1.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f, 1.0f },
-			{ 1.0f, 0.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f, 1.0f },
+			{ 1.0f, 0.0f, 1.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 1.0f },
+			{ 1.0f, 0.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f },
 
-			{ 0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, 0.0f, 1.0f },
-			{ 0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 1.0f, 0.0f, 1.0f,  0.0f, 0.0f, 0.0f, 1.0f },
+			{ 0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 1.0f },
+			{ 0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 1.0f, 0.0f, 1.0f,  0.0f, 0.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f },
 
-			{ 1.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 0.0f, 1.0f },
-			{ 1.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f, 1.0f },
+			{ 1.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 1.0f },
+			{ 1.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f },
 
-			{ 0.0f, 1.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f },
-			{ 0.0f, 1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f,  1.0f, 1.0f, 0.0f, 1.0f }
+			{ 0.0f, 1.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 1.0f },
+			{ 0.0f, 1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f,  1.0f, 1.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f }
 		};
 
 		cube.pos = position;
