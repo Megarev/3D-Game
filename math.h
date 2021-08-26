@@ -42,28 +42,50 @@ struct vf3d {
 vf3d const vf3d::ZERO = { 0.0f, 0.0f, 0.0f, 1.0f };
 vf3d const vf3d::ONE  = { 1.0f, 1.0f, 1.0f, 1.0f };
 
+struct Tex2D {
+	float u = 0.0f, v = 0.0f;
+	float w = 1.0f; // Depth
+
+	static Tex2D Lerp(const Tex2D& a, const Tex2D& b, float t) {
+		return {
+			(1.0f - t) * a.u + t * b.u,
+			(1.0f - t) * a.v + t * b.v,
+			(1.0f - t) * a.w + t * b.w,
+		};
+	}
+
+	friend Tex2D operator/(const Tex2D& t, float other) {
+		return {
+			t.u / other,
+			t.v / other,
+			t.w
+		};
+	}
+};
+
 struct Triangle { 
 	vf3d v[3];
+	Tex2D tex[3];
 	olc::Pixel shade;
 	float t = 0.0f;
 
-	Triangle operator+(const Triangle& other) { return { v[0] + other.v[0], v[1] + other.v[1], v[2] + other.v[2], shade }; }
-	Triangle operator+(const vf3d& other) { return { v[0] + other, v[1] + other, v[2] + other, shade }; }
+	Triangle operator+(const Triangle& other) { return { v[0] + other.v[0], v[1] + other.v[1], v[2] + other.v[2] }; }
+	Triangle operator+(const vf3d& other) { return { v[0] + other, v[1] + other, v[2] + other }; }
 	void operator+=(const Triangle& other) { (*this) = (*this) + other; }
 	void operator+=(const vf3d& other) { (*this) = (*this) + other; }
 
-	Triangle operator-(const Triangle& other) { return { v[0] - other.v[0], v[1] - other.v[1], v[2] - other.v[2], shade }; }
-	Triangle operator-(const vf3d& other) { return { v[0] - other, v[1] - other, v[2] - other, shade }; }
+	Triangle operator-(const Triangle& other) { return { v[0] - other.v[0], v[1] - other.v[1], v[2] - other.v[2] }; }
+	Triangle operator-(const vf3d& other) { return { v[0] - other, v[1] - other, v[2] - other }; }
 	void operator-=(const Triangle& other) { (*this) = (*this) - other; }
 	void operator-=(const vf3d& other) { (*this) = (*this) - other; }
 
-	Triangle operator*(const Triangle& other) { return { v[0] * other.v[0], v[1] * other.v[1], v[2] * other.v[2], shade }; }
-	Triangle operator*(const vf3d& other) { return { v[0] * other, v[1] * other, v[2] * other, shade }; }
+	Triangle operator*(const Triangle& other) { return { v[0] * other.v[0], v[1] * other.v[1], v[2] * other.v[2] }; }
+	Triangle operator*(const vf3d& other) { return { v[0] * other, v[1] * other, v[2] * other }; }
 	void operator*=(const Triangle& other) { (*this) = (*this) * other; }
 	void operator*=(const vf3d& other) { (*this) = (*this) * other; }
 
-	Triangle operator/(const Triangle& other) { return { v[0] / other.v[0], v[1] / other.v[1], v[2] / other.v[2], shade }; }
-	Triangle operator/(const vf3d& other) { return { v[0] / other, v[1] / other, v[2] / other, shade }; }
+	Triangle operator/(const Triangle& other) { return { v[0] / other.v[0], v[1] / other.v[1], v[2] / other.v[2] }; }
+	Triangle operator/(const vf3d& other) { return { v[0] / other, v[1] / other, v[2] / other }; }
 	void operator/=(const Triangle& other) { (*this) = (*this) / other; }
 	void operator/=(const vf3d& other) { (*this) = (*this) / other; }
 };
@@ -71,8 +93,8 @@ struct Triangle {
 struct Plane {
 	vf3d point, normal; // Point in the plane and its normalized normal
 
-	vf3d LinePlaneIntersection(const vf3d& a, const vf3d& b) {
-		float t = (point - a).dot(normal) / (b - a).dot(normal);
+	vf3d LinePlaneIntersection(const vf3d& a, const vf3d& b, float& t) {
+		t = (point - a).dot(normal) / (b - a).dot(normal);
 		return vf3d::Lerp(a, b, t);
 	}
 
@@ -87,17 +109,19 @@ struct Plane {
 	
 		vf3d* inside_points[3]; int n_inside = 0;
 		vf3d* outside_points[3]; int n_outside = 0;
+		Tex2D* inside_tex[3]; int n_inside_tex = 0;
+		Tex2D* outside_tex[3]; int n_outside_tex = 0;
 
 		float d0 = Distance(input.v[0]);
 		float d1 = Distance(input.v[1]);
 		float d2 = Distance(input.v[2]);
 
-		if (d0 >= 0.0f) inside_points[n_inside++] = &input.v[0];
-		else outside_points[n_outside++] = &input.v[0];
-		if (d1 >= 0.0f) inside_points[n_inside++] = &input.v[1];
-		else outside_points[n_outside++] = &input.v[1];
-		if (d2 >= 0.0f) inside_points[n_inside++] = &input.v[2];
-		else outside_points[n_outside++] = &input.v[2];
+		if (d0 >= 0.0f) { inside_points[n_inside++] = &input.v[0]; inside_tex[n_inside_tex++] = &input.tex[0]; }
+		else { outside_points[n_outside++] = &input.v[0]; outside_tex[n_outside_tex++] = &input.tex[0]; }
+		if (d1 >= 0.0f) { inside_points[n_inside++] = &input.v[1]; inside_tex[n_inside_tex++] = &input.tex[1]; }
+		else { outside_points[n_outside++] = &input.v[1]; outside_tex[n_outside_tex++] = &input.tex[1]; }
+		if (d2 >= 0.0f) { inside_points[n_inside++] = &input.v[2]; inside_tex[n_inside_tex++] = &input.tex[2]; }
+		else { outside_points[n_outside++] = &input.v[2]; outside_tex[n_outside_tex++] = &input.tex[2]; }
 	
 		if (n_outside == 3) {
 			// All points are in the negative plane
@@ -116,9 +140,16 @@ struct Plane {
 			output[0].shade = input.shade;
 			output[0].t = input.t;
 
+			float t = 0.0f;
+
 			output[0].v[0] = *inside_points[0];
-			output[0].v[1] = LinePlaneIntersection(*inside_points[0], *outside_points[0]);
-			output[0].v[2] = LinePlaneIntersection(*inside_points[0], *outside_points[1]);
+			output[0].tex[0] = *inside_tex[0];
+
+			output[0].v[1] = LinePlaneIntersection(*inside_points[0], *outside_points[0], t);
+			output[0].tex[1] = Tex2D::Lerp(*inside_tex[0], *outside_tex[0], t);
+
+			output[0].v[2] = LinePlaneIntersection(*inside_points[0], *outside_points[1], t);
+			output[0].tex[2] = Tex2D::Lerp(*inside_tex[0], *outside_tex[1], t);
 		
 			return 1;
 		}
@@ -135,12 +166,24 @@ struct Plane {
 			output[1].t = input.t;
 
 			output[0].v[0] = *inside_points[0];
+			output[0].tex[0] = *inside_tex[0];
+
 			output[0].v[1] = *inside_points[1];
-			output[0].v[2] = LinePlaneIntersection(*inside_points[0], *outside_points[0]);
+			output[0].tex[1] = *inside_tex[1];
+
+			float t = 0.0f;
+
+			output[0].v[2] = LinePlaneIntersection(*inside_points[0], *outside_points[0], t);
+			output[0].tex[2] = Tex2D::Lerp(*inside_tex[0], *outside_tex[0], t);
 
 			output[1].v[0] = *inside_points[1];
+			output[1].tex[0] = *inside_tex[1];
+
 			output[1].v[1] = output[0].v[2];
-			output[1].v[2] = LinePlaneIntersection(*inside_points[1], *outside_points[0]);
+			output[1].tex[1] = output[0].tex[2];
+
+			output[1].v[2] = LinePlaneIntersection(*inside_points[1], *outside_points[0], t);
+			output[1].tex[2] = Tex2D::Lerp(*inside_tex[1], *outside_tex[0], t);
 
 			return 2;
 		}

@@ -2,34 +2,57 @@
 #include "olcPixelGameEngine.h"
 #include "engine.h"
 
-class PhysicsGame : public olc::PixelGameEngine {
+class Game : public olc::PixelGameEngine {
 private:
-	Engine3D engine;
 	Mesh cube;
+	Engine3D engine;
+
+	olc::Sprite* box = nullptr;
 public:
-	PhysicsGame() {
+	Game() {
 		sAppName = "Title";
 	}
 
 	bool OnUserCreate() override {
 
-		cube.LoadObj("cube.txt");
-		engine.SetProjectionMatrix(ScreenWidth(), ScreenHeight(), PI / 2.0f, 0.5f, 1000.0f);
+		engine.Initialize(ScreenWidth(), ScreenHeight(), PI / 2.0f, 0.5f, 1000.0f);
 
-		Mesh box = cube;
-		box.color = olc::RED;
-		box.type = ShapeType::CUBE;
-		engine.AddMesh("box", box);
+		box = new olc::Sprite("images/box.png");
+
+		cube.t = {
+			{ 0.0f, 0.0f, 0.0f, 1.0f,  0.0f, 1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 1.0f },
+			{ 0.0f, 0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f },
+
+			{ 1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 1.0f },
+			{ 1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f },
+
+			{ 1.0f, 0.0f, 1.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 1.0f },
+			{ 1.0f, 0.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f },
+
+			{ 0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 1.0f },
+			{ 0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 1.0f, 0.0f, 1.0f,  0.0f, 0.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f },
+
+			{ 1.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 1.0f },
+			{ 1.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f },
+
+			{ 0.0f, 1.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 1.0f },
+			{ 0.0f, 1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f,  1.0f, 1.0f, 0.0f, 1.0f,  0.0f, 1.0f, 1.0f,  1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f }
+		};
+
+		//cube.LoadObj("cube.txt");
+		cube.color = olc::WHITE;
+		cube.type = ShapeType::CUBE;
+
+		engine.AddMesh("cube", cube);
 
 		return true;
 	}
 
+
 	bool OnUserUpdate(float dt) override {
 
-		const olc::vf2d& m_pos = GetMousePos() * 1.0f;
-
 		// Input
-		engine.Input(this, dt, 8.0f, 2.0f);
+		engine.Input(this, dt);
 
 		// Logic
 		engine.light_dir = -engine.look_dir;
@@ -37,7 +60,8 @@ public:
 
 		// Render
 		Clear(olc::BLACK);
-		engine.Render(this);
+		//engine.Render(this);
+		engine.DrawTexture(this, box);
 
 		return true;
 	}
@@ -45,7 +69,7 @@ public:
 
 int main() {
 
-	PhysicsGame game;
+	Game game;
 	if (game.Construct(400, 400, 1, 1, false, true)) {
 		game.Start();
 	}
