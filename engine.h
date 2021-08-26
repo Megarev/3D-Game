@@ -138,7 +138,7 @@ public:
 	// Cache
 	olc::vf2d prev_m_pos; // Previous mouse position
 
-	float* depth = nullptr; // Depth buffer
+	float* depth = nullptr;
 private:
 	void RasterizeMesh(const Mesh& mesh, std::vector<Triangle>& raster) {
 	
@@ -191,16 +191,16 @@ private:
 					proj.tex[1] = clipped[n].tex[1];
 					proj.tex[2] = clipped[n].tex[2];
 
-					proj.v[0] /= proj.v[0].w;
-					proj.v[1] /= proj.v[1].w;
-					proj.v[2] /= proj.v[2].w;
-
 					proj.tex[0] = proj.tex[0] / proj.v[0].w;
 					proj.tex[1] = proj.tex[1] / proj.v[1].w;
 					proj.tex[2] = proj.tex[2] / proj.v[2].w;
 					proj.tex[0].w = 1.0f / proj.v[0].w;
 					proj.tex[1].w = 1.0f / proj.v[1].w;
 					proj.tex[2].w = 1.0f / proj.v[2].w;
+					
+					proj.v[0] /= proj.v[0].w;
+					proj.v[1] /= proj.v[1].w;
+					proj.v[2] /= proj.v[2].w;
 
 					// Invert x/y axis
 					proj.v[0].x *= -1.0f; proj.v[1].x *= -1.0f; proj.v[2].x *= -1.0f;
@@ -364,7 +364,7 @@ public:
 	void Initialize(int32_t w, int32_t h, float FOV, float z_near, float z_far) {
 		SetProjectionMatrix(w, h, FOV, z_near, z_far);
 		
-		depth = new float[w * h]{ 0.0f };
+		depth = new float[w * h];
 	}
 
 	vf3d GetWorldPoint(const vf3d& point) const { return world.Multiply(point); }
@@ -461,7 +461,6 @@ public:
 				const olc::vi2d& p3 = { (int)t_clipped.v[2].x, (int)t_clipped.v[2].y };
 				float w3 = t_clipped.tex[2].w;
 
-
 				DrawColoredTriangle(pge, p1, w1, p2, w2, p3, w3, t_clipped.shade);
 				if (is_wire_frame) {
 					pge->DrawTriangle((int)t_clipped.v[0].x, (int)t_clipped.v[0].y,
@@ -469,6 +468,17 @@ public:
 						(int)t_clipped.v[2].x, (int)t_clipped.v[2].y,
 						wire_frame_color);
 				}
+
+				/*SpriteData s1 = { (int)t_clipped.v[0].x, (int)t_clipped.v[0].y, t_clipped.tex[0] };
+				SpriteData s2 = { (int)t_clipped.v[1].x, (int)t_clipped.v[1].y, t_clipped.tex[1] };
+				SpriteData s3 = { (int)t_clipped.v[2].x, (int)t_clipped.v[2].y, t_clipped.tex[2] };
+
+				olc::Sprite* s = new olc::Sprite(1, 1);
+				s->SetPixel(0, 0, t_clipped.shade);
+
+				DrawTexturedTriangle(pge, s1, s2, s3, s);
+
+				delete s;*/
 			}
 		}
 	}
@@ -562,23 +572,23 @@ public:
 		}
 		if (offset2.y) {
 			move_step2 = offset2 / std::fabsf(offset2.y);
-			move_step_w1 = (w3 - w1) / std::fabsf(offset2.y);
+			move_step_w2 = (w3 - w1) / std::fabsf(offset2.y);
 		}
 
 		// Draw upper triangle
 		if (offset1.y) {
 			for (int i = p1.y; i <= p2.y; i++) {
-				olc::vi2d a = p1 + move_step1 * (i - p1.y);
+				float ax = p1.x + move_step1.x * (i - p1.y);
 				float aw = w1 + (i - p1.y) * move_step_w1;
-				olc::vi2d b = p1 + move_step2 * (i - p1.y);
+				float bx = p1.x + move_step2.x * (i - p1.y);
 				float bw = w1 + (i - p1.y) * move_step_w2;
 
-				if (a.x > b.x) { std::swap(a, b); std::swap(aw, bw); }
+				if (ax > bx) { std::swap(ax, bx); std::swap(aw, bw); }
 
-				float step = 1.0f / float((int)b.x - (int)a.x);
+				float step = 1.0f / float((int)bx - (int)ax);
 				float t = 0.0f;
 
-				for (int j = a.x; j < b.x; j++) {
+				for (int j = ax; j < bx; j++) {
 					float w = aw + t * (bw - aw);
 					if (w > depth[i * width + j]) {
 						pge->Draw(j, i, color);
@@ -604,17 +614,17 @@ public:
 		// Draw lower triangle
 		if (offset1.y) {
 			for (int i = p2.y; i <= p3.y; i++) {
-				olc::vi2d a = p2 + move_step1 * (i - p2.y);
-				float aw = w1 + (i - p2.y) * move_step_w1;
-				olc::vi2d b = p1 + move_step2 * (i - p1.y);
+				float ax = p2.x + move_step1.x * (i - p2.y);
+				float aw = w2 + (i - p2.y) * move_step_w1;
+				float bx = p1.x + move_step2.x * (i - p1.y);
 				float bw = w1 + (i - p1.y) * move_step_w2;
 
-				if (a.x > b.x) { std::swap(a, b); std::swap(aw, bw); }
+				if (ax > bx) { std::swap(ax, bx); std::swap(aw, bw); }
 
-				float step = 1.0f / float((int)b.x - (int)a.x);
+				float step = 1.0f / float((int)bx - (int)ax);
 				float t = 0.0f;
 
-				for (int j = a.x; j < b.x; j++) {
+				for (int j = ax; j < bx; j++) {
 					float w = aw + t * (bw - aw);
 					if (w > depth[i * width + j]) {
 						pge->Draw(j, i, color);
@@ -662,5 +672,11 @@ public:
 		std::vector<Triangle> tri_cube;
 		RasterizeMesh(cube, tri_cube);
 		RenderTriangles(pge, tri_cube, is_wire_frame, wire_frame_color);
+	}
+
+	void DrawMesh(olc::PixelGameEngine* pge, const Mesh& mesh, bool is_wire_frame = false, const olc::Pixel& wire_frame_color = olc::WHITE) {
+		std::vector<Triangle> tris;
+		RasterizeMesh(mesh, tris);
+		RenderTriangles(pge, tris, is_wire_frame, wire_frame_color);
 	}
 };
