@@ -414,7 +414,7 @@ public:
 		memset(depth, 0.0f, width * height * sizeof(float));
 	}
 
-	void RenderTriangles(olc::PixelGameEngine* pge, std::vector<Triangle>& raster) {
+	void RenderTriangles(olc::PixelGameEngine* pge, std::vector<Triangle>& raster, bool is_wire_frame = false, const olc::Pixel& wire_frame_color = olc::WHITE) {
 
 		for (auto& t : raster) {
 			Triangle clipped[2];
@@ -463,15 +463,12 @@ public:
 
 
 				DrawColoredTriangle(pge, p1, w1, p2, w2, p3, w3, t_clipped.shade);
-				/*pge->FillTriangle((int)t_clipped.v[0].x, (int)t_clipped.v[0].y,
-					(int)t_clipped.v[1].x, (int)t_clipped.v[1].y,
-					(int)t_clipped.v[2].x, (int)t_clipped.v[2].y,
-					t_clipped.shade);*/
-
-				/*DrawTriangle((int)t_clipped.v[0].x, (int)t_clipped.v[0].y,
-							 (int)t_clipped.v[1].x, (int)t_clipped.v[1].y,
-							 (int)t_clipped.v[2].x, (int)t_clipped.v[2].y,
-							 olc::BLACK);*/
+				if (is_wire_frame) {
+					pge->DrawTriangle((int)t_clipped.v[0].x, (int)t_clipped.v[0].y,
+						(int)t_clipped.v[1].x, (int)t_clipped.v[1].y,
+						(int)t_clipped.v[2].x, (int)t_clipped.v[2].y,
+						wire_frame_color);
+				}
 			}
 		}
 	}
@@ -635,7 +632,7 @@ public:
 		DrawTexture(pge, tris, sprite, is_wire_frame);
 	}
 
-	void DrawCube(olc::PixelGameEngine* pge, const vf3d& position, const olc::Pixel& color, bool is_fill = false) {
+	void DrawCube(olc::PixelGameEngine* pge, const vf3d& position, const olc::Pixel& color, bool is_wire_frame = false, const olc::Pixel& wire_frame_color = olc::WHITE) {
 		Mesh cube;
 
 		cube.t = {
@@ -664,6 +661,6 @@ public:
 	
 		std::vector<Triangle> tri_cube;
 		RasterizeMesh(cube, tri_cube);
-		RenderTriangles(pge, tri_cube);
+		RenderTriangles(pge, tri_cube, is_wire_frame, wire_frame_color);
 	}
 };
