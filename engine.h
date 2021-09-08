@@ -1,8 +1,4 @@
 #pragma once
-#include <fstream>
-#include <vector>
-#include <string>
-#include <unordered_map>
 #include <random>
 #include "math.h"
 
@@ -44,7 +40,7 @@ enum class ShapeType {
 struct Mesh {
 	std::vector<Triangle> t;
 	vf3d pos, velocity;
-	vf3d size = vf3d::ONE; // Cubes and other shapes
+	vf3d size = { 1.0f, 1.0f, 1.0f }; // Cubes and other shapes
 	float radius = 0.5f; // Spheres
 
 	olc::Pixel init_color, color;
@@ -371,6 +367,7 @@ public:
 	vf3d GetCamPoint(const vf3d& point) const { return cam.Multiply(point); }
 	vf3d GetViewPoint(const vf3d& point) const { return view.Multiply(point); }
 	vf3d GetScreenPoint(const vf3d& point) const { return point - vf3d{ 0.0f, 0.0f, z_translation }; }
+	vf3d GetProjectedPoint(const vf3d& point) const { return projection.Multiply(point); }
 	vf3d GetNearPoint(const vf3d& point) const { return point + vf3d{ 0.0f, 0.0f, z_translation }; }
 	vf3d ToWorld(const olc::vf2d& point, float z_offset = 10.0f) const {
 		const vf3d& pos = vf3d{ -2.0f * (point.x / width - 0.5f), -2.0f * (point.y / height - 0.5f), 1.0f, 0.0f };
@@ -468,22 +465,20 @@ public:
 						(int)t_clipped.v[2].x, (int)t_clipped.v[2].y,
 						wire_frame_color);
 				}
-
-				/*SpriteData s1 = { (int)t_clipped.v[0].x, (int)t_clipped.v[0].y, t_clipped.tex[0] };
-				SpriteData s2 = { (int)t_clipped.v[1].x, (int)t_clipped.v[1].y, t_clipped.tex[1] };
-				SpriteData s3 = { (int)t_clipped.v[2].x, (int)t_clipped.v[2].y, t_clipped.tex[2] };
-
-				olc::Sprite* s = new olc::Sprite(1, 1);
-				s->SetPixel(0, 0, t_clipped.shade);
-
-				DrawTexturedTriangle(pge, s1, s2, s3, s);
-
-				delete s;*/
 			}
 		}
 	}
 
 	void DrawTexturedTriangle(olc::PixelGameEngine* pge, SpriteData s1, SpriteData s2, SpriteData s3, olc::Sprite* sprite = nullptr) {
+		
+		auto WrapTexel = [](float value) {
+			float size = 1.0f;
+			while (value > size) value -= size;
+			while (value < 0.0f) value += size;
+			return value;
+			//return value > size ? value - size : (value < 0.0f ? value + size : value);
+		};
+		
 		// y-sort the points
 		if (s2.y < s1.y) std::swap(s1, s2);
 		if (s3.y < s1.y) std::swap(s1, s3);
@@ -497,8 +492,12 @@ public:
 		SpriteData move_step1, move_step2;
 		
 		// Calculate gradients for upper triangle
-		if (offset1.y) move_step1 = offset1 / std::fabsf(offset1.y);
-		if (offset2.y) move_step2 = offset2 / std::fabsf(offset2.y);
+		if (offset1.y) {
+			move_step1 = offset1 / std::fabsf(offset1.y);
+		}
+		if (offset2.y) {
+			move_step2 = offset2 / std::fabsf(offset2.y);
+		}
 
 		// Draw upper triangle
 		if (offset1.y) {
@@ -514,7 +513,7 @@ public:
 				for (int j = a.x; j < b.x; j++) {
 					Tex2D texel = Tex2D::Lerp(a.tex, b.tex, t);
 					if (texel.w > depth[i * width + j]) {
-						pge->Draw(j, i, sprite->Sample(texel.u / texel.w, texel.v / texel.w));
+						pge->Draw(j, i, sprite->Sample(WrapTexel(texel.u / texel.w), WrapTexel(texel.v / texel.w)));
 						depth[i * width + j] = texel.w;
 					}
 					t += step;
@@ -525,8 +524,9 @@ public:
 		// Calculate gradients for lower triangle
 		offset1 = s3 - s2;
 		move_step1 = SpriteData{}; // Reset move_step1
-		if (offset1.y) move_step1 = offset1 / std::fabsf(offset1.y);
-
+		if (offset1.y) {
+			move_step1 = offset1 / std::fabsf(offset1.y);
+		}
 		// Draw lower triangle
 		if (offset1.y) {
 			for (int i = s2.y; i <= s3.y; i++) {
@@ -542,7 +542,7 @@ public:
 				for (int j = a.x; j < b.x; j++) {
 					Tex2D texel = Tex2D::Lerp(a.tex, b.tex, t);
 					if (texel.w > depth[i * width + j]) {
-						pge->Draw(j, i, sprite->Sample(texel.u / texel.w, texel.v / texel.w));
+						pge->Draw(j, i, sprite->Sample(WrapTexel(texel.u / texel.w), WrapTexel(texel.v / texel.w)));
 						depth[i * width + j] = texel.w;
 					}
 					t += step;
@@ -678,5 +678,47 @@ public:
 		std::vector<Triangle> tris;
 		RasterizeMesh(mesh, tris);
 		RenderTriangles(pge, tris, is_wire_frame, wire_frame_color);
+	}
+
+	void DrawLine(olc::PixelGameEngine* pge, const vf3d& p1, const vf3d& p2, const olc::Pixel& color = olc::WHITE) {
+		// Add translations/rotations
+		vf3d transform_p1 = GetWorldPoint(p1), transform_p2 = GetWorldPoint(p2);
+		
+		// To view space
+		vf3d transform_p1_view = GetViewPoint(transform_p1), transform_p2_view = GetViewPoint(transform_p2);
+		
+		// To projected space
+		vf3d transform_p1_proj = GetProjectedPoint(transform_p1_view), transform_p2_proj = GetProjectedPoint(transform_p2_view);
+		transform_p1_proj /= transform_p1_proj.w;
+		transform_p2_proj /= transform_p2_proj.w;
+		
+		// Invert x/y axis
+		transform_p1_proj.x *= -1.0f; transform_p1_proj.y *= -1.0f;
+		transform_p2_proj.x *= -1.0f; transform_p2_proj.y *= -1.0f;
+
+		// Translate to center
+		transform_p1_proj.x += 1.0f; transform_p1_proj.y += 1.0f;
+		transform_p2_proj.x += 1.0f; transform_p2_proj.y += 1.0f;
+
+		// Scale to pixel space
+		transform_p1_proj.x *= 0.5f * width; transform_p1_proj.y *= 0.5f * height;
+		transform_p2_proj.x *= 0.5f * width; transform_p2_proj.y *= 0.5f * height;
+
+		if (transform_p1_proj.y > transform_p2_proj.y) std::swap(transform_p1_proj, transform_p2_proj);
+
+		// Render point
+		olc::vf2d proj_p1 = { transform_p1_proj.x, transform_p1_proj.y }, proj_p2 = { transform_p2_proj.x, transform_p2_proj.y };
+		const olc::vf2d& offset = proj_p2 - proj_p1;
+		float slope = offset.x / offset.y;
+
+		if (offset.y) {
+			//proj_p1 = { std::fminf(transform_p1_proj.x, width), std::fminf(transform_p1_proj.y, height) };
+			proj_p2 = { std::fminf(transform_p2_proj.x, width), std::fminf(transform_p2_proj.y, height) };
+			for (int y = proj_p1.y; y < proj_p2.y; y++) {
+				int x = proj_p1.x + slope * (y - proj_p1.y);
+
+				pge->Draw(x, y, color);
+			}
+		}
 	}
 };
