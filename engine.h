@@ -687,8 +687,29 @@ public:
 		// To view space
 		vf3d transform_p1_view = GetViewPoint(transform_p1), transform_p2_view = GetViewPoint(transform_p2);
 		
+		// Clip against forward plane
+		Plane forward_plane = { { 0.0f, 0.0f, 0.1f }, { 0.0f, 0.0f, 1.0f } };
+		float d0 = forward_plane.Distance(transform_p1_view);
+		float d1 = forward_plane.Distance(transform_p2_view);
+		int n_inside = 0, n_outside = 0;
+		vf3d* inside[2], *outside[2];
+		
+		if (d0 >= 0.0f) inside[n_inside++] = &transform_p1_view;
+		else outside[n_outside++] = &transform_p1_view;
+		if (d1 >= 0.0f) inside[n_inside++] = &transform_p2_view;
+		else outside[n_outside++] = &transform_p2_view;
+
+		vf3d clipped_p1, clipped_p2;
+		if (n_inside == 2) { clipped_p1 = *inside[0]; clipped_p2 = *inside[1]; }
+		if (n_outside == 2) return;
+		if (n_inside == 1 && n_outside == 1) {
+			float t = 0.0f;
+			clipped_p1 = forward_plane.LinePlaneIntersection(*inside[0], *outside[0], t);
+			clipped_p2 = *inside[0];
+		}
+
 		// To projected space
-		vf3d transform_p1_proj = GetProjectedPoint(transform_p1_view), transform_p2_proj = GetProjectedPoint(transform_p2_view);
+		vf3d transform_p1_proj = GetProjectedPoint(clipped_p1), transform_p2_proj = GetProjectedPoint(clipped_p2);
 		transform_p1_proj /= transform_p1_proj.w;
 		transform_p2_proj /= transform_p2_proj.w;
 		
@@ -704,7 +725,8 @@ public:
 		transform_p1_proj.x *= 0.5f * width; transform_p1_proj.y *= 0.5f * height;
 		transform_p2_proj.x *= 0.5f * width; transform_p2_proj.y *= 0.5f * height;
 
-		if (transform_p1_proj.y > transform_p2_proj.y) std::swap(transform_p1_proj, transform_p2_proj);
+		// Y-sort the points
+		if (transform_p1_proj.y > transform_p2_proj.y) { std::swap(transform_p1_proj, transform_p2_proj); }
 
 		// Render point
 		olc::vf2d proj_p1 = { transform_p1_proj.x, transform_p1_proj.y }, proj_p2 = { transform_p2_proj.x, transform_p2_proj.y };
@@ -712,8 +734,6 @@ public:
 		float slope = offset.x / offset.y;
 
 		if (offset.y) {
-			//proj_p1 = { std::fminf(transform_p1_proj.x, width), std::fminf(transform_p1_proj.y, height) };
-			proj_p2 = { std::fminf(transform_p2_proj.x, width), std::fminf(transform_p2_proj.y, height) };
 			for (int y = proj_p1.y; y < proj_p2.y; y++) {
 				int x = proj_p1.x + slope * (y - proj_p1.y);
 
